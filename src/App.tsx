@@ -1,13 +1,27 @@
-import { Pause, Play, Minus, Plus } from 'lucide-react'
-import { type PointerEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { Check, ChevronDown, Pause, Play, Minus, Plus } from 'lucide-react'
+import {
+  type Dispatch,
+  type KeyboardEvent,
+  type PointerEvent,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { createPortal } from 'react-dom'
 
-const MIN_BPM = 40
-const MAX_BPM = 220
+const MIN_BPM = 30
+const MAX_BPM = 300
 const TEMPO_STEP_WIDTH = 8
+const TEMPO_MARK_WIDTH = 4
+const TEMPO_OVERSCAN_STEPS = 48
 const TEMPO_VALUES = Array.from(
   { length: MAX_BPM - MIN_BPM + 1 },
   (_unused, index) => MIN_BPM + index,
 )
+const TEMPO_TOTAL_WIDTH = (TEMPO_VALUES.length - 1) * TEMPO_STEP_WIDTH + TEMPO_MARK_WIDTH
 const BEAT_OPTIONS = [2, 3, 4] as const
 const BEAT_UNIT_OPTIONS = [4] as const
 const SOUND_OPTIONS = [{ id: 'classic', label: '经典木鱼点' }] as const
@@ -26,10 +40,32 @@ type SoundId = (typeof SOUND_OPTIONS)[number]['id']
 type AudioConfig = {
   bpm: number
   beatsPerMeasure: number
-  beatStrengths: number[]
+  beatToneLevels: number[]
   beatRhythms: RhythmId[]
   accentFirstBeat: boolean
   sound: SoundId
+}
+
+type PickerOption<T extends string | number> = {
+  value: T
+  label: string
+}
+
+type TempoDragState = {
+  pointerId: number
+  startX: number
+  startScrollLeft: number
+}
+
+type TempoViewport = {
+  scrollLeft: number
+  width: number
+}
+
+type PickerPosition = {
+  top: number
+  left: number
+  width: number
 }
 
 type WorkletMessage = {
@@ -50,8 +86,8 @@ const RHYTHMS: Array<{ id: RhythmId; label: string; shortLabel: string }> = [
 
 const panelClassName =
   'rounded-lg border border-sky-100 bg-white/90 p-5 shadow-[0_18px_50px_rgba(91,141,166,0.13)] backdrop-blur'
-const selectClassName =
-  'h-11 w-full rounded-md border border-sky-100 bg-white px-3 text-sm font-medium text-slate-700 shadow-inner shadow-sky-50 transition focus:border-teal-300 focus:outline-none'
+const pickerButtonClassName =
+  'flex h-11 w-full items-center justify-between gap-2 rounded-md border border-sky-100 bg-white px-3 text-sm font-medium text-slate-700 shadow-inner shadow-sky-50 transition hover:border-teal-200 hover:bg-teal-50/60 focus:border-teal-300 focus:outline-none'
 const iconButtonClassName =
   'inline-flex h-10 w-10 items-center justify-center rounded-md border border-sky-100 bg-white text-slate-700 shadow-sm transition hover:border-teal-200 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-45'
 
@@ -59,7 +95,7 @@ function clamp(value: number, minValue: number, maxValue: number) {
   return Math.min(maxValue, Math.max(minValue, value))
 }
 
-function createStrengths(beatsPerMeasure: number) {
+function createToneLevels(beatsPerMeasure: number) {
   return Array.from({ length: beatsPerMeasure }, () => 2)
 }
 
@@ -76,6 +112,144 @@ function formatDuration(totalSeconds: number) {
 
 function rhythmLabel(rhythmId: RhythmId) {
   return RHYTHMS.find((rhythm) => rhythm.id === rhythmId)?.shortLabel ?? '四'
+}
+
+function OptionPicker<T extends string | number>({
+  id,
+  value,
+  options,
+  openPickerId,
+  setOpenPickerId,
+  onChange,
+}: {
+  id: string
+  value: T
+  options: Array<PickerOption<T>>
+  openPickerId: string | null
+  setOpenPickerId: Dispatch<SetStateAction<string | null>>
+  onChange: (value: T) => void
+}) {
+  const selectedOption = options.find((option) => option.value === value) ?? options[0]
+  const isOpen = openPickerId === id
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const [menuPosition, setMenuPosition] = useState<PickerPosition | null>(null)
+
+  const updateMenuPosition = useCallback(() => {
+    const button = buttonRef.current
+    if (!button) {
+      return
+    }
+
+    const buttonBounds = button.getBoundingClientRect()
+    setMenuPosition({
+      top: buttonBounds.bottom - 1,
+      left: buttonBounds.left,
+      width: buttonBounds.width,
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    const handleOutsidePointerDown = (event: globalThis.PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) {
+        return
+      }
+
+      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return
+      }
+
+      setOpenPickerId(null)
+    }
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenPickerId(null)
+        buttonRef.current?.focus()
+      }
+    }
+
+    document.addEventListener('pointerdown', handleOutsidePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('resize', updateMenuPosition)
+    window.addEventListener('scroll', updateMenuPosition, true)
+
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsidePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('resize', updateMenuPosition)
+      window.removeEventListener('scroll', updateMenuPosition, true)
+    }
+  }, [isOpen, setOpenPickerId, updateMenuPosition])
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        className={pickerButtonClassName}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        onClick={() => {
+          if (isOpen) {
+            setOpenPickerId(null)
+            return
+          }
+
+          updateMenuPosition()
+          setOpenPickerId(id)
+        }}
+      >
+        <span className="truncate">{selectedOption.label}</span>
+        <ChevronDown
+          size={16}
+          strokeWidth={2.4}
+          className={`shrink-0 text-slate-400 transition ${isOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {isOpen &&
+        menuPosition &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="fixed z-[1000] overflow-hidden rounded-b-md rounded-t-none border border-sky-100 bg-white p-1 shadow-[0_16px_40px_rgba(91,141,166,0.18)]"
+            role="listbox"
+            style={menuPosition}
+          >
+            {options.map((option) => {
+              const isSelected = option.value === value
+              return (
+                <button
+                  key={String(option.value)}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`flex h-10 w-full items-center justify-between rounded-sm px-3 text-left text-sm font-medium transition ${
+                    isSelected
+                      ? 'bg-teal-50 text-teal-700'
+                      : 'text-slate-600 hover:bg-sky-50'
+                  }`}
+                  onClick={() => {
+                    onChange(option.value)
+                    setOpenPickerId(null)
+                  }}
+                >
+                  <span>{option.label}</span>
+                  {isSelected && <Check size={16} strokeWidth={2.4} />}
+                </button>
+              )
+            })}
+          </div>,
+          document.body,
+        )}
+    </div>
+  )
 }
 
 function RhythmIcon({ rhythmId }: { rhythmId: RhythmId }) {
@@ -162,16 +336,25 @@ function App() {
   const [beatUnit, setBeatUnit] = useState(4)
   const [sound, setSound] = useState<SoundId>('classic')
   const [accentFirstBeat, setAccentFirstBeat] = useState(true)
-  const [beatStrengths, setBeatStrengths] = useState(() => createStrengths(4))
+  const [beatToneLevels, setBeatToneLevels] = useState(() => createToneLevels(4))
   const [beatRhythms, setBeatRhythms] = useState(() => createRhythms(4))
   const [activeRhythmBeatIndex, setActiveRhythmBeatIndex] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentBeatIndex, setCurrentBeatIndex] = useState(-1)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [audioNotice, setAudioNotice] = useState('')
+  const [tempoRailPadding, setTempoRailPadding] = useState(0)
+  const [tempoViewport, setTempoViewport] = useState<TempoViewport>({
+    scrollLeft: 0,
+    width: 0,
+  })
+  const [openPickerId, setOpenPickerId] = useState<string | null>(null)
 
   const tempoRailRef = useRef<HTMLDivElement | null>(null)
-  const isDraggingTempoRef = useRef(false)
+  const tempoDragStateRef = useRef<TempoDragState | null>(null)
+  const isProgrammaticTempoScrollRef = useRef(false)
+  const tempoScrollReleaseFrameRef = useRef(0)
+  const tempoViewportFrameRef = useRef(0)
   const audioContextRef = useRef<AudioContext | null>(null)
   const metronomeNodeRef = useRef<AudioWorkletNode | null>(null)
   const audioSetupPromiseRef = useRef<Promise<AudioWorkletNode> | null>(null)
@@ -187,27 +370,124 @@ function App() {
     () => ({
       bpm,
       beatsPerMeasure,
-      beatStrengths,
+      beatToneLevels,
       beatRhythms,
       accentFirstBeat,
       sound,
     }),
-    [accentFirstBeat, beatRhythms, beatStrengths, beatsPerMeasure, bpm, sound],
+    [accentFirstBeat, beatRhythms, beatToneLevels, beatsPerMeasure, bpm, sound],
+  )
+
+  const beatOptions = useMemo(
+    () => BEAT_OPTIONS.map((option) => ({ value: option, label: String(option) })),
+    [],
+  )
+
+  const beatUnitOptions = useMemo(
+    () => BEAT_UNIT_OPTIONS.map((option) => ({ value: option, label: String(option) })),
+    [],
+  )
+
+  const soundOptions = useMemo(
+    () => SOUND_OPTIONS.map((option) => ({ value: option.id, label: option.label })),
+    [],
+  )
+
+  const visibleTempoValues = useMemo(() => {
+    const overscanWidth = TEMPO_OVERSCAN_STEPS * TEMPO_STEP_WIDTH
+    const viewportWidth = tempoViewport.width || 0
+    const startIndex = clamp(
+      Math.floor((tempoViewport.scrollLeft - tempoRailPadding - overscanWidth) / TEMPO_STEP_WIDTH),
+      0,
+      TEMPO_VALUES.length - 1,
+    )
+    const endIndex = clamp(
+      Math.ceil(
+        (tempoViewport.scrollLeft + viewportWidth - tempoRailPadding + overscanWidth) /
+          TEMPO_STEP_WIDTH,
+      ),
+      0,
+      TEMPO_VALUES.length - 1,
+    )
+
+    return TEMPO_VALUES.slice(startIndex, endIndex + 1).map((tempoValue, index) => ({
+      tempoIndex: startIndex + index,
+      tempoValue,
+    }))
+  }, [tempoRailPadding, tempoViewport.scrollLeft, tempoViewport.width])
+
+  const updateTempoViewport = useCallback((tempoRail: HTMLDivElement) => {
+    const nextViewport = {
+      scrollLeft: tempoRail.scrollLeft,
+      width: tempoRail.clientWidth,
+    }
+
+    setTempoViewport((currentViewport) => {
+      if (
+        currentViewport.scrollLeft === nextViewport.scrollLeft &&
+        currentViewport.width === nextViewport.width
+      ) {
+        return currentViewport
+      }
+
+      return nextViewport
+    })
+  }, [])
+
+  const commitTempoFromRail = useCallback(
+    (tempoRail: HTMLDivElement) => {
+      updateTempoViewport(tempoRail)
+
+      if (isProgrammaticTempoScrollRef.current) {
+        return
+      }
+
+      const centeredIndex = clamp(
+        Math.round(tempoRail.scrollLeft / TEMPO_STEP_WIDTH),
+        0,
+        TEMPO_VALUES.length - 1,
+      )
+      const nextBpm = TEMPO_VALUES[centeredIndex]
+      setBpm((currentBpm) => (currentBpm === nextBpm ? currentBpm : nextBpm))
+    },
+    [updateTempoViewport],
   )
 
   useEffect(() => {
     const tempoRail = tempoRailRef.current
-    if (!tempoRail || isDraggingTempoRef.current) {
+    if (!tempoRail) {
       return
     }
 
-    const activeOffset = (bpm - MIN_BPM) * TEMPO_STEP_WIDTH
-    const centeredOffset = activeOffset - tempoRail.clientWidth / 2 + TEMPO_STEP_WIDTH / 2
+    const updateRailPadding = () => {
+      setTempoRailPadding(Math.max(0, tempoRail.clientWidth / 2 - TEMPO_MARK_WIDTH / 2))
+      updateTempoViewport(tempoRail)
+    }
+
+    updateRailPadding()
+    const resizeObserver = new ResizeObserver(updateRailPadding)
+    resizeObserver.observe(tempoRail)
+
+    return () => resizeObserver.disconnect()
+  }, [updateTempoViewport])
+
+  useEffect(() => {
+    const tempoRail = tempoRailRef.current
+    if (!tempoRail || tempoDragStateRef.current) {
+      return
+    }
+
+    window.cancelAnimationFrame(tempoScrollReleaseFrameRef.current)
+    isProgrammaticTempoScrollRef.current = true
     tempoRail.scrollTo({
-      left: clamp(centeredOffset, 0, tempoRail.scrollWidth - tempoRail.clientWidth),
-      behavior: 'smooth',
+      left: (bpm - MIN_BPM) * TEMPO_STEP_WIDTH,
+      behavior: 'auto',
     })
-  }, [bpm])
+    updateTempoViewport(tempoRail)
+    tempoScrollReleaseFrameRef.current = window.requestAnimationFrame(() => {
+      isProgrammaticTempoScrollRef.current = false
+    })
+  }, [bpm, tempoRailPadding, updateTempoViewport])
 
   useEffect(() => {
     const node = metronomeNodeRef.current
@@ -249,6 +529,8 @@ function App() {
 
   useEffect(
     () => () => {
+      window.cancelAnimationFrame(tempoScrollReleaseFrameRef.current)
+      window.cancelAnimationFrame(tempoViewportFrameRef.current)
       metronomeNodeRef.current?.port.postMessage({ type: 'stop' })
       void audioContextRef.current?.close()
     },
@@ -261,12 +543,12 @@ function App() {
 
   const changeBeatsPerMeasure = (nextBeatsPerMeasure: number) => {
     setBeatsPerMeasure(nextBeatsPerMeasure)
-    setBeatStrengths((currentStrengths) => {
-      const nextStrengths = createStrengths(nextBeatsPerMeasure)
-      currentStrengths.slice(0, nextBeatsPerMeasure).forEach((strength, index) => {
-        nextStrengths[index] = strength
+    setBeatToneLevels((currentToneLevels) => {
+      const nextToneLevels = createToneLevels(nextBeatsPerMeasure)
+      currentToneLevels.slice(0, nextBeatsPerMeasure).forEach((toneLevel, index) => {
+        nextToneLevels[index] = toneLevel
       })
-      return nextStrengths
+      return nextToneLevels
     })
     setBeatRhythms((currentRhythms) => {
       const nextRhythms = createRhythms(nextBeatsPerMeasure)
@@ -283,38 +565,43 @@ function App() {
     )
   }
 
-  const updateTempoFromPointer = (clientX: number) => {
+  const updateTempoFromScroll = () => {
     const tempoRail = tempoRailRef.current
-    if (!tempoRail) {
+    if (!tempoRail || tempoViewportFrameRef.current) {
       return
     }
 
-    const railBounds = tempoRail.getBoundingClientRect()
-    const offset = clientX - railBounds.left + tempoRail.scrollLeft
-    const nextIndex = clamp(Math.round(offset / TEMPO_STEP_WIDTH), 0, TEMPO_VALUES.length - 1)
-    setBpm(TEMPO_VALUES[nextIndex])
+    tempoViewportFrameRef.current = window.requestAnimationFrame(() => {
+      tempoViewportFrameRef.current = 0
+      commitTempoFromRail(tempoRail)
+    })
   }
 
   const handleTempoPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    isDraggingTempoRef.current = true
+    tempoDragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startScrollLeft: event.currentTarget.scrollLeft,
+    }
     event.currentTarget.setPointerCapture(event.pointerId)
-    updateTempoFromPointer(event.clientX)
+    event.preventDefault()
   }
 
   const handleTempoPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (isDraggingTempoRef.current) {
-      updateTempoFromPointer(event.clientX)
+    const dragState = tempoDragStateRef.current
+    if (dragState?.pointerId === event.pointerId) {
+      event.currentTarget.scrollLeft = dragState.startScrollLeft - (event.clientX - dragState.startX)
     }
   }
 
   const handleTempoPointerEnd = (event: PointerEvent<HTMLDivElement>) => {
-    isDraggingTempoRef.current = false
+    tempoDragStateRef.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
   }
 
-  const handleTempoKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleTempoKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
       event.preventDefault()
       adjustBpm(-1)
@@ -342,14 +629,14 @@ function App() {
   }
 
   const updateBeatStrength = (beatIndex: number, levelIndex: number) => {
-    setBeatStrengths((currentStrengths) =>
-      currentStrengths.map((strength, index) => {
+    setBeatToneLevels((currentToneLevels) =>
+      currentToneLevels.map((toneLevel, index) => {
         if (index !== beatIndex) {
-          return strength
+          return toneLevel
         }
 
-        const requestedStrength = levelIndex + 1
-        return strength === 1 && requestedStrength === 1 ? 0 : requestedStrength
+        const requestedToneLevel = levelIndex + 1
+        return toneLevel === 1 && requestedToneLevel === 1 ? 0 : requestedToneLevel
       }),
     )
   }
@@ -433,7 +720,7 @@ function App() {
 
   return (
     <main className="min-h-screen bg-[linear-gradient(135deg,#f7fbff_0%,#eefbf7_48%,#fff8fb_100%)] px-4 py-4 text-slate-800 sm:px-6 lg:px-8">
-      <div className="mx-auto grid min-h-[calc(100svh-2rem)] w-full max-w-[1480px] grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="mx-auto grid min-h-[calc(100svh-2rem)] w-full max-w-[1480px] grid-cols-1 content-center items-center gap-4 md:grid-cols-2 xl:grid-cols-3">
         <section className={panelClassName} aria-labelledby="global-panel-title">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -475,7 +762,7 @@ function App() {
 
             <div
               ref={tempoRailRef}
-              className="mt-5 overflow-x-auto rounded-md border border-sky-100 bg-sky-50/70 py-4 [scrollbar-width:thin]"
+              className="scrollbar-none relative mt-5 cursor-grab overflow-x-auto rounded-md border border-sky-100 bg-sky-50/70 py-4 active:cursor-grabbing"
               role="slider"
               tabIndex={0}
               aria-label="BPM 数轴"
@@ -487,22 +774,35 @@ function App() {
               onPointerUp={handleTempoPointerEnd}
               onPointerCancel={handleTempoPointerEnd}
               onKeyDown={handleTempoKeyDown}
+              onScroll={updateTempoFromScroll}
             >
-              <div className="flex w-max items-end gap-1 px-1 pb-1">
-                {TEMPO_VALUES.map((tempoValue) => {
+              <div className="pointer-events-none absolute left-1/2 top-4 h-9 w-px -translate-x-1/2 rounded-full bg-teal-300/45" />
+              <div
+                className="relative h-[61px]"
+                style={{ width: tempoRailPadding * 2 + TEMPO_TOTAL_WIDTH }}
+              >
+                {visibleTempoValues.map(({ tempoIndex, tempoValue }) => {
                   const isActiveTempo = tempoValue === bpm
                   const isMajorTempo = tempoValue % 5 === 0
+                  const scaleY = isActiveTempo ? 2 : isMajorTempo ? 1.55 : 1
                   return (
-                    <div key={tempoValue} className="flex w-1 flex-col items-center justify-end">
-                      <div
-                        className={`w-1 rounded-full transition-[height,background-color,box-shadow] duration-200 ease-out ${
-                          isActiveTempo
-                            ? 'h-9 bg-teal-500 shadow-[0_0_0_4px_rgba(20,184,166,0.14)]'
-                            : isMajorTempo
-                              ? 'h-7 bg-sky-300'
-                              : 'h-[18px] bg-sky-200'
-                        }`}
-                      />
+                    <div
+                      key={tempoValue}
+                      className="absolute top-0 flex w-1 flex-col items-center justify-end"
+                      style={{ left: tempoRailPadding + tempoIndex * TEMPO_STEP_WIDTH }}
+                    >
+                      <div className="flex h-9 w-1 items-end overflow-visible">
+                        <div
+                          className={`h-[18px] w-1 origin-bottom rounded-full transition-[transform,background-color,box-shadow] duration-200 ease-out ${
+                            isActiveTempo
+                              ? 'bg-teal-500 shadow-[0_0_0_4px_rgba(20,184,166,0.14)]'
+                              : isMajorTempo
+                                ? 'bg-sky-300'
+                                : 'bg-sky-200'
+                          }`}
+                          style={{ transform: `scaleY(${scaleY})` }}
+                        />
+                      </div>
                       <div className="mt-2 h-4 w-8 text-center text-[10px] font-medium text-slate-400">
                         {isMajorTempo ? tempoValue : ''}
                       </div>
@@ -514,49 +814,40 @@ function App() {
           </div>
 
           <div className="mt-7 grid gap-4 sm:grid-cols-2">
-            <label className="block">
+            <div className="block">
               <span className="mb-2 block text-sm font-semibold text-slate-600">拍号</span>
               <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                <select
-                  className={selectClassName}
+                <OptionPicker
+                  id="beats-per-measure"
                   value={beatsPerMeasure}
-                  onChange={(event) => changeBeatsPerMeasure(Number(event.target.value))}
-                >
-                  {BEAT_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
+                  options={beatOptions}
+                  openPickerId={openPickerId}
+                  setOpenPickerId={setOpenPickerId}
+                  onChange={changeBeatsPerMeasure}
+                />
                 <span className="text-xl font-semibold text-slate-300">/</span>
-                <select
-                  className={selectClassName}
+                <OptionPicker
+                  id="beat-unit"
                   value={beatUnit}
-                  onChange={(event) => setBeatUnit(Number(event.target.value))}
-                >
-                  {BEAT_UNIT_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
+                  options={beatUnitOptions}
+                  openPickerId={openPickerId}
+                  setOpenPickerId={setOpenPickerId}
+                  onChange={setBeatUnit}
+                />
               </div>
-            </label>
+            </div>
 
-            <label className="block">
+            <div className="block">
               <span className="mb-2 block text-sm font-semibold text-slate-600">音色</span>
-              <select
-                className={selectClassName}
+              <OptionPicker
+                id="sound"
                 value={sound}
-                onChange={(event) => setSound(event.target.value as SoundId)}
-              >
-                {SOUND_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                options={soundOptions}
+                openPickerId={openPickerId}
+                setOpenPickerId={setOpenPickerId}
+                onChange={setSound}
+              />
+            </div>
           </div>
 
           <label className="mt-5 flex items-center gap-3 rounded-md bg-rose-50/70 px-3 py-3 text-sm font-semibold text-slate-700">
@@ -572,7 +863,7 @@ function App() {
 
         <section className={panelClassName} aria-labelledby="transport-panel-title">
           <div>
-            <p className="text-xs font-semibold uppercase text-rose-500">Tone</p>
+            <p className="text-xs font-semibold uppercase text-teal-600">Tone</p>
             <h2 id="transport-panel-title" className="mt-1 text-2xl font-semibold text-slate-950">
               播放控制
             </h2>
@@ -598,18 +889,23 @@ function App() {
                   </div>
                   <div className="flex h-24 flex-col-reverse gap-1">
                     {[0, 1, 2].map((levelIndex) => {
-                      const isActiveLevel = beatStrengths[beatIndex] > levelIndex
+                      const isActiveLevel = beatToneLevels[beatIndex] > levelIndex
+                      const toneColorClassName = [
+                        'bg-emerald-200 shadow-inner shadow-emerald-100',
+                        'bg-teal-300 shadow-inner shadow-teal-200',
+                        'bg-cyan-400 shadow-inner shadow-cyan-300/70',
+                      ][levelIndex]
                       return (
                         <button
                           key={levelIndex}
                           type="button"
-                          className={`min-h-0 flex-1 rounded-sm transition ${
+                          className={`min-h-0 flex-1 rounded-sm border transition ${
                             isActiveLevel
-                              ? 'bg-rose-400 shadow-inner shadow-rose-300/60'
-                              : 'bg-white shadow-inner shadow-sky-100'
+                              ? `${toneColorClassName} border-white/70`
+                              : 'border-sky-100 bg-white shadow-inner shadow-sky-100'
                           }`}
                           onClick={() => updateBeatStrength(beatIndex, levelIndex)}
-                          aria-label={`${label} 强度 ${levelIndex + 1}`}
+                          aria-label={`${label} 音色层级 ${levelIndex + 1}`}
                         />
                       )
                     })}

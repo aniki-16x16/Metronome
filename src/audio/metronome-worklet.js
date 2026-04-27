@@ -8,13 +8,20 @@ const RHYTHM_OFFSETS = {
   swing: [0, 2 / 3],
 }
 
+const TONE_PROFILES = [
+  null,
+  { frequencyRatio: 0.86, gain: 0.17, overtoneGain: 0.08, biteGain: 0.02, duration: 0.052 },
+  { frequencyRatio: 1, gain: 0.18, overtoneGain: 0.2, biteGain: 0.045, duration: 0.043 },
+  { frequencyRatio: 1.16, gain: 0.18, overtoneGain: 0.36, biteGain: 0.075, duration: 0.036 },
+]
+
 class MetronomeProcessor extends AudioWorkletProcessor {
   constructor() {
     super()
     this.config = {
       bpm: 96,
       beatsPerMeasure: 4,
-      beatStrengths: [2, 2, 2, 2],
+      beatToneLevels: [2, 2, 2, 2],
       beatRhythms: ['quarter', 'quarter', 'quarter', 'quarter'],
       accentFirstBeat: true,
       sound: 'classic',
@@ -48,9 +55,12 @@ class MetronomeProcessor extends AudioWorkletProcessor {
   applyConfig(config) {
     const beatsPerMeasure = this.clamp(Math.round(config.beatsPerMeasure || 4), 2, 4)
     this.config = {
-      bpm: this.clamp(Number(config.bpm) || 96, 40, 220),
+      bpm: this.clamp(Number(config.bpm) || 96, 30, 300),
       beatsPerMeasure,
-      beatStrengths: this.normalizeStrengths(config.beatStrengths, beatsPerMeasure),
+      beatToneLevels: this.normalizeToneLevels(
+        config.beatToneLevels || config.beatStrengths,
+        beatsPerMeasure,
+      ),
       beatRhythms: this.normalizeRhythms(config.beatRhythms, beatsPerMeasure),
       accentFirstBeat: Boolean(config.accentFirstBeat),
       sound: config.sound || 'classic',
@@ -58,9 +68,9 @@ class MetronomeProcessor extends AudioWorkletProcessor {
     this.beatIndex = this.clamp(this.beatIndex, 0, beatsPerMeasure - 1)
   }
 
-  normalizeStrengths(strengths, beatsPerMeasure) {
+  normalizeToneLevels(toneLevels, beatsPerMeasure) {
     return Array.from({ length: beatsPerMeasure }, (_unused, index) =>
-      this.clamp(Math.round(strengths?.[index] ?? 2), 0, 3),
+      this.clamp(Math.round(toneLevels?.[index] ?? 2), 0, 3),
     )
   }
 
@@ -80,17 +90,27 @@ class MetronomeProcessor extends AudioWorkletProcessor {
   }
 
   triggerTick(frame) {
-    const strength = this.config.beatStrengths[this.beatIndex] ?? 2
+    const toneLevel = this.config.beatToneLevels[this.beatIndex] ?? 2
+    const toneProfile = TONE_PROFILES[toneLevel]
     const isPrimarySubdivision = this.subdivisionIndex === 0
     const isAccent =
       isPrimarySubdivision && this.beatIndex === 0 && this.config.accentFirstBeat
 
-    if (strength > 0) {
-      const strengthGain = [0, 0.1, 0.17, 0.26][strength]
-      const frequency = isAccent ? 1760 : isPrimarySubdivision ? 1280 : 920
-      const gain = strengthGain * (isAccent ? 1.35 : isPrimarySubdivision ? 1 : 0.48)
-      const durationFrames = Math.floor(sampleRate * (isPrimarySubdivision ? 0.045 : 0.026))
-      this.clicks.push({ frame, durationFrames, frequency, gain })
+    if (toneProfile) {
+      const baseFrequency = isAccent ? 1760 : isPrimarySubdivision ? 1280 : 920
+      const frequency = baseFrequency * toneProfile.frequencyRatio
+      const gain = toneProfile.gain * (isAccent ? 1.28 : isPrimarySubdivision ? 1 : 0.56)
+      const durationFrames = Math.floor(
+        sampleRate * (isPrimarySubdivision ? toneProfile.duration : toneProfile.duration * 0.62),
+      )
+      this.clicks.push({
+        frame,
+        durationFrames,
+        frequency,
+        gain,
+        overtoneGain: toneProfile.overtoneGain,
+        biteGain: toneProfile.biteGain,
+      })
     }
 
     this.port.postMessage({
@@ -131,7 +151,11 @@ class MetronomeProcessor extends AudioWorkletProcessor {
       const progress = age / click.durationFrames
       const envelope = (1 - progress) ** 3
       const phase = (Math.PI * 2 * click.frequency * age) / sampleRate
-      const tone = Math.sin(phase) * 0.82 + Math.sin(phase * 2.01) * 0.18
+      const bite = Math.sin(phase * 5.7 + Math.sin(age * 0.17)) * click.biteGain
+      const tone =
+        Math.sin(phase) * (1 - click.overtoneGain) +
+        Math.sin(phase * 2.01) * click.overtoneGain +
+        bite
       output += tone * envelope * click.gain
     }
 
