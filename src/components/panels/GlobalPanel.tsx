@@ -27,7 +27,9 @@ const soundOptions: Array<PickerOption<SoundId>> = SOUND_OPTIONS.map((option) =>
 
 type GlobalPanelProps = {
   bpm: number
+  volume: number
   onBpmChange: Dispatch<SetStateAction<number>>
+  onVolumeChange: Dispatch<SetStateAction<number>>
   beatsPerMeasure: number
   beatUnit: number
   sound: SoundId
@@ -40,7 +42,9 @@ type GlobalPanelProps = {
 
 export function GlobalPanel({
   bpm,
+  volume,
   onBpmChange,
+  onVolumeChange,
   beatsPerMeasure,
   beatUnit,
   sound,
@@ -50,6 +54,8 @@ export function GlobalPanel({
   onSoundChange,
   onAccentFirstBeatChange,
 }: GlobalPanelProps) {
+  const volumePercent = Math.round(volume * 100)
+
   return (
     <section className={panelClassName} aria-labelledby="global-panel-title">
       <div className="flex items-start justify-between gap-3">
@@ -90,6 +96,23 @@ export function GlobalPanel({
           <span className="mb-2 block text-sm font-semibold text-slate-600">音色</span>
           <OptionPicker id="sound" value={sound} options={soundOptions} onChange={onSoundChange} />
         </div>
+      </div>
+
+      <div className="mt-5 rounded-md border border-sky-100 bg-white/70 px-3 py-3">
+        <div className="mb-2 flex items-center justify-between text-sm font-semibold text-slate-600">
+          <span>音量</span>
+          <span className="font-mono text-slate-500">{volumePercent}%</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={volumePercent}
+          className="h-2 w-full cursor-pointer appearance-none rounded-full bg-sky-100 accent-teal-500"
+          onChange={(event) => onVolumeChange(Number(event.target.value) / 100)}
+          aria-label="音量"
+        />
       </div>
 
       <CheckboxField

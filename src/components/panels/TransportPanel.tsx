@@ -1,4 +1,4 @@
-import { Pause, Play } from 'lucide-react'
+import { Pause, Play, RotateCcw } from 'lucide-react'
 import { formatDuration } from '../../lib/metronome'
 import { panelClassName } from './panelStyles'
 
@@ -18,6 +18,7 @@ type TransportPanelProps = {
   onToneLevelChange: (beatIndex: number, levelIndex: number) => void
   onStart: () => void
   onPause: () => void
+  onReset: () => void
 }
 
 export function TransportPanel({
@@ -30,6 +31,7 @@ export function TransportPanel({
   onToneLevelChange,
   onStart,
   onPause,
+  onReset,
 }: TransportPanelProps) {
   const beatLabels = Array.from(
     { length: beatsPerMeasure },
@@ -100,11 +102,20 @@ export function TransportPanel({
         <button
           type="button"
           className="inline-flex h-14 min-w-32 items-center justify-center gap-2 rounded-md border border-rose-100 bg-white px-5 text-base font-semibold text-rose-500 shadow-sm transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-45"
-          onClick={onPause}
-          disabled={!isPlaying}
+          onClick={isPlaying ? onPause : onReset}
+          disabled={!isPlaying && elapsedSeconds <= 0}
         >
-          <Pause size={20} fill="currentColor" strokeWidth={2.2} />
-          暂停
+          {isPlaying ? (
+            <>
+              <Pause size={20} fill="currentColor" strokeWidth={2.2} />
+              暂停
+            </>
+          ) : (
+            <>
+              <RotateCcw size={20} strokeWidth={2.2} />
+              重置
+            </>
+          )}
         </button>
       </div>
 

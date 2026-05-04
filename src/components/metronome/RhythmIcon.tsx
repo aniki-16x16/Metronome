@@ -34,6 +34,14 @@ export function RhythmIcon({ rhythmId }: { rhythmId: RhythmId }) {
           <path d="M17.4 13H53.4" />
         </>
       )}
+      {rhythmId === 'sixteenthEighthSixteenth' && (
+        <>
+          {[16, 32, 48].map((xPosition) => note(xPosition))}
+          <path d="M19.4 8H51.4" />
+          <path d="M19.4 13H29.4" />
+          <path d="M41.4 13H51.4" />
+        </>
+      )}
       {rhythmId === 'dottedFront' && (
         <>
           {note(23)}
@@ -53,10 +61,10 @@ export function RhythmIcon({ rhythmId }: { rhythmId: RhythmId }) {
       {rhythmId === 'triplet' && (
         <>
           {[18, 32, 46].map((xPosition) => note(xPosition))}
-          <path d="M20 7H44" />
+          <path d="M21.4 8V6H49.4V8" />
           <text
-            x="32"
-            y="6"
+            x="35"
+            y="5"
             textAnchor="middle"
             className="fill-current text-[8px] font-semibold"
             stroke="none"

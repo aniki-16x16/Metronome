@@ -1,26 +1,45 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { GlobalPanel } from './components/panels/GlobalPanel'
 import { SubdivisionPanel } from './components/panels/SubdivisionPanel'
 import { TransportPanel } from './components/panels/TransportPanel'
 import { useMetronomeEngine } from './hooks/useMetronomeEngine'
 import {
   type AudioConfig,
+  DEFAULT_BPM,
+  DEFAULT_VOLUME,
   type RhythmId,
   type SoundId,
   createRhythms,
   createToneLevels,
 } from './lib/metronome'
 import { clamp } from './lib/number'
+import {
+  loadMetronomePanelSettings,
+  saveMetronomePanelSettings,
+} from './lib/settings-storage'
 
 function App() {
-  const [bpm, setBpm] = useState(96)
-  const [beatsPerMeasure, setBeatsPerMeasure] = useState(4)
-  const [beatUnit, setBeatUnit] = useState(4)
-  const [sound, setSound] = useState<SoundId>('classic')
-  const [accentFirstBeat, setAccentFirstBeat] = useState(true)
-  const [beatToneLevels, setBeatToneLevels] = useState(() => createToneLevels(4))
-  const [beatRhythms, setBeatRhythms] = useState(() => createRhythms(4))
-  const [activeRhythmBeatIndex, setActiveRhythmBeatIndex] = useState(0)
+  const [initialSettings] = useState(() => loadMetronomePanelSettings())
+
+  const [bpm, setBpm] = useState(initialSettings.bpm || DEFAULT_BPM)
+  const [volume, setVolume] = useState(initialSettings.volume ?? DEFAULT_VOLUME)
+  const [beatsPerMeasure, setBeatsPerMeasure] = useState(initialSettings.beatsPerMeasure)
+  const [beatUnit, setBeatUnit] = useState(initialSettings.beatUnit)
+  const [sound, setSound] = useState<SoundId>(initialSettings.sound)
+  const [accentFirstBeat, setAccentFirstBeat] = useState(initialSettings.accentFirstBeat)
+  const [beatToneLevels, setBeatToneLevels] = useState(
+    initialSettings.beatToneLevels.length > 0
+      ? initialSettings.beatToneLevels
+      : createToneLevels(initialSettings.beatsPerMeasure),
+  )
+  const [beatRhythms, setBeatRhythms] = useState(
+    initialSettings.beatRhythms.length > 0
+      ? initialSettings.beatRhythms
+      : createRhythms(initialSettings.beatsPerMeasure),
+  )
+  const [activeRhythmBeatIndex, setActiveRhythmBeatIndex] = useState(
+    initialSettings.activeRhythmBeatIndex,
+  )
 
   const audioConfig = useMemo<AudioConfig>(
     () => ({
@@ -30,8 +49,9 @@ function App() {
       beatRhythms,
       accentFirstBeat,
       sound,
+      volume,
     }),
-    [accentFirstBeat, beatRhythms, beatToneLevels, beatsPerMeasure, bpm, sound],
+    [accentFirstBeat, beatRhythms, beatToneLevels, beatsPerMeasure, bpm, sound, volume],
   )
 
   const {
@@ -41,6 +61,7 @@ function App() {
     audioNotice,
     startMetronome,
     pauseMetronome,
+    resetMetronome,
   } = useMetronomeEngine(audioConfig)
 
   const changeBeatsPerMeasure = (nextBeatsPerMeasure: number) => {
@@ -85,12 +106,38 @@ function App() {
     )
   }
 
+  useEffect(() => {
+    saveMetronomePanelSettings({
+      bpm,
+      volume,
+      beatsPerMeasure,
+      beatUnit,
+      sound,
+      accentFirstBeat,
+      beatToneLevels,
+      beatRhythms,
+      activeRhythmBeatIndex,
+    })
+  }, [
+    accentFirstBeat,
+    activeRhythmBeatIndex,
+    beatRhythms,
+    beatToneLevels,
+    beatUnit,
+    beatsPerMeasure,
+    bpm,
+    sound,
+    volume,
+  ])
+
   return (
     <main className="min-h-screen bg-[linear-gradient(135deg,#f7fbff_0%,#eefbf7_48%,#fff8fb_100%)] px-4 py-4 text-slate-800 sm:px-6 lg:px-8">
       <div className="mx-auto grid min-h-[calc(100svh-2rem)] w-full max-w-[1480px] grid-cols-1 content-center items-center gap-4 md:grid-cols-2 xl:grid-cols-3">
         <GlobalPanel
           bpm={bpm}
+          volume={volume}
           onBpmChange={setBpm}
+          onVolumeChange={setVolume}
           beatsPerMeasure={beatsPerMeasure}
           beatUnit={beatUnit}
           sound={sound}
@@ -111,6 +158,7 @@ function App() {
           onToneLevelChange={updateBeatToneLevel}
           onStart={startMetronome}
           onPause={pauseMetronome}
+          onReset={resetMetronome}
         />
 
         <SubdivisionPanel

@@ -2,6 +2,7 @@ const RHYTHM_OFFSETS = {
   quarter: [0],
   eighth: [0, 0.5],
   sixteenth: [0, 0.25, 0.5, 0.75],
+  sixteenthEighthSixteenth: [0, 0.25, 0.75],
   dottedFront: [0, 0.75],
   dottedBack: [0, 0.25],
   triplet: [0, 1 / 3, 2 / 3],
@@ -15,11 +16,14 @@ const TONE_PROFILES = [
   { frequencyRatio: 1.16, gain: 0.18, overtoneGain: 0.36, biteGain: 0.075, duration: 0.036 },
 ]
 
+const MASTER_VOLUME_BOOST = 3
+
 class MetronomeProcessor extends AudioWorkletProcessor {
   constructor() {
     super()
     this.config = {
-      bpm: 96,
+      bpm: 60,
+      volume: 1,
       beatsPerMeasure: 4,
       beatToneLevels: [2, 2, 2, 2],
       beatRhythms: ['quarter', 'quarter', 'quarter', 'quarter'],
@@ -54,8 +58,10 @@ class MetronomeProcessor extends AudioWorkletProcessor {
 
   applyConfig(config) {
     const beatsPerMeasure = this.clamp(Math.round(config.beatsPerMeasure || 4), 2, 4)
+    const rawVolume = Number(config.volume)
     this.config = {
-      bpm: this.clamp(Number(config.bpm) || 96, 30, 300),
+      bpm: this.clamp(Number(config.bpm) || 60, 30, 300),
+      volume: this.clamp(Number.isFinite(rawVolume) ? rawVolume : 1, 0, 1),
       beatsPerMeasure,
       beatToneLevels: this.normalizeToneLevels(
         config.beatToneLevels || config.beatStrengths,
@@ -107,7 +113,7 @@ class MetronomeProcessor extends AudioWorkletProcessor {
         frame,
         durationFrames,
         frequency,
-        gain,
+        gain: gain * this.config.volume * MASTER_VOLUME_BOOST,
         overtoneGain: toneProfile.overtoneGain,
         biteGain: toneProfile.biteGain,
       })

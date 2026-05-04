@@ -128,6 +128,18 @@ export function useMetronomeEngine(audioConfig: AudioConfig) {
     }
   }, [elapsedSeconds])
 
+  const resetMetronome = useCallback(() => {
+    metronomeNodeRef.current?.port.postMessage({ type: 'stop' })
+    playStartedAtRef.current = null
+    elapsedBeforePlayRef.current = 0
+    setElapsedSeconds(0)
+    setCurrentBeatIndex(-1)
+    setIsPlaying(false)
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = 'paused'
+    }
+  }, [])
+
   return {
     isPlaying,
     currentBeatIndex,
@@ -135,5 +147,6 @@ export function useMetronomeEngine(audioConfig: AudioConfig) {
     audioNotice,
     startMetronome,
     pauseMetronome,
+    resetMetronome,
   }
 }
