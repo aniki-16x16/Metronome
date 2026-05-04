@@ -5,7 +5,12 @@ export const DEFAULT_VOLUME = 1
 
 export const BEAT_OPTIONS = [2, 3, 4] as const
 export const BEAT_UNIT_OPTIONS = [4] as const
-export const SOUND_OPTIONS = [{ id: 'classic', label: '经典木鱼点' }] as const
+export const SOUND_OPTIONS = [
+  { id: 'classic', label: '经典木鱼点' },
+  { id: 'claves', label: '响棒' },
+  { id: 'tick', label: '滴答' },
+  { id: 'shaker', label: '沙锤' },
+] as const
 
 export type RhythmId =
   | 'quarter'

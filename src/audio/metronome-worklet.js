@@ -16,6 +16,49 @@ const TONE_PROFILES = [
   { frequencyRatio: 1.16, gain: 0.18, overtoneGain: 0.36, biteGain: 0.075, duration: 0.036 },
 ]
 
+const SOUND_PROFILES = {
+  classic: {
+    frequencies: { accent: 1760, primary: 1280, subdivision: 920 },
+    gainScale: 1,
+    durationScale: 1,
+    overtoneScale: 1,
+    biteScale: 1,
+    toneBlend: 1,
+    noiseAmount: 0,
+    noiseRate: 0.07,
+  },
+  claves: {
+    frequencies: { accent: 2280, primary: 1780, subdivision: 1320 },
+    gainScale: 1.14,
+    durationScale: 0.72,
+    overtoneScale: 0.78,
+    biteScale: 1.34,
+    toneBlend: 0.92,
+    noiseAmount: 0.08,
+    noiseRate: 0.21,
+  },
+  tick: {
+    frequencies: { accent: 2520, primary: 1980, subdivision: 1480 },
+    gainScale: 1.04,
+    durationScale: 0.58,
+    overtoneScale: 0.34,
+    biteScale: 1.44,
+    toneBlend: 0.96,
+    noiseAmount: 0.02,
+    noiseRate: 0.17,
+  },
+  shaker: {
+    frequencies: { accent: 1360, primary: 1040, subdivision: 820 },
+    gainScale: 1.18,
+    durationScale: 0.86,
+    overtoneScale: 0.28,
+    biteScale: 0.34,
+    toneBlend: 0.36,
+    noiseAmount: 0.86,
+    noiseRate: 0.53,
+  },
+}
+
 const MASTER_VOLUME_BOOST = 3
 
 class MetronomeProcessor extends AudioWorkletProcessor {
@@ -98,24 +141,37 @@ class MetronomeProcessor extends AudioWorkletProcessor {
   triggerTick(frame) {
     const toneLevel = this.config.beatToneLevels[this.beatIndex] ?? 2
     const toneProfile = TONE_PROFILES[toneLevel]
+    const soundProfile = SOUND_PROFILES[this.config.sound] || SOUND_PROFILES.classic
     const isPrimarySubdivision = this.subdivisionIndex === 0
     const isAccent =
       isPrimarySubdivision && this.beatIndex === 0 && this.config.accentFirstBeat
 
     if (toneProfile) {
-      const baseFrequency = isAccent ? 1760 : isPrimarySubdivision ? 1280 : 920
+      const baseFrequency = isAccent
+        ? soundProfile.frequencies.accent
+        : isPrimarySubdivision
+          ? soundProfile.frequencies.primary
+          : soundProfile.frequencies.subdivision
       const frequency = baseFrequency * toneProfile.frequencyRatio
-      const gain = toneProfile.gain * (isAccent ? 1.28 : isPrimarySubdivision ? 1 : 0.56)
+      const gain =
+        toneProfile.gain *
+        (isAccent ? 1.28 : isPrimarySubdivision ? 1 : 0.56) *
+        soundProfile.gainScale
       const durationFrames = Math.floor(
-        sampleRate * (isPrimarySubdivision ? toneProfile.duration : toneProfile.duration * 0.62),
+        sampleRate *
+        (isPrimarySubdivision ? toneProfile.duration : toneProfile.duration * 0.62) *
+        soundProfile.durationScale,
       )
       this.clicks.push({
         frame,
         durationFrames,
         frequency,
         gain: gain * this.config.volume * MASTER_VOLUME_BOOST,
-        overtoneGain: toneProfile.overtoneGain,
-        biteGain: toneProfile.biteGain,
+        overtoneGain: toneProfile.overtoneGain * soundProfile.overtoneScale,
+        biteGain: toneProfile.biteGain * soundProfile.biteScale,
+        toneBlend: soundProfile.toneBlend,
+        noiseAmount: soundProfile.noiseAmount,
+        noiseRate: soundProfile.noiseRate,
       })
     }
 
@@ -162,7 +218,10 @@ class MetronomeProcessor extends AudioWorkletProcessor {
         Math.sin(phase) * (1 - click.overtoneGain) +
         Math.sin(phase * 2.01) * click.overtoneGain +
         bite
-      output += tone * envelope * click.gain
+      const noiseSeed = Math.sin((click.frame + age) * click.noiseRate * 12.9898) * 43758.5453
+      const noise = (noiseSeed - Math.floor(noiseSeed)) * 2 - 1
+      const blendedSignal = tone * click.toneBlend + noise * click.noiseAmount
+      output += blendedSignal * envelope * click.gain
     }
 
     return this.clamp(output, -1, 1)

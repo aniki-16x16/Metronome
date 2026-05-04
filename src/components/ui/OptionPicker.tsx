@@ -43,7 +43,7 @@ export function OptionPicker<T extends string | number>({
 
     const buttonBounds = button.getBoundingClientRect()
     setMenuPosition({
-      top: buttonBounds.bottom - 1,
+      top: buttonBounds.bottom,
       left: buttonBounds.left,
       width: buttonBounds.width,
     })
@@ -120,7 +120,7 @@ export function OptionPicker<T extends string | number>({
           <div
             id={`${id}-listbox`}
             ref={menuRef}
-            className="fixed z-[1000] overflow-hidden rounded-b-md rounded-t-none border border-sky-100 bg-white p-1 shadow-[0_16px_40px_rgba(91,141,166,0.18)]"
+            className="fixed z-[1000] overflow-hidden rounded-md border border-sky-100 bg-white p-1 shadow-[0_16px_40px_rgba(91,141,166,0.18)]"
             role="listbox"
             style={menuPosition}
           >
